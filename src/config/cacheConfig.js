@@ -146,6 +146,12 @@ const cacheTTL = {
     process.env.CACHE_TTL_SIGNING_KEYS_MS,
     20000
   ),
+
+  /** /soroban/contract/:id/wasm — WASM bytecode metadata, 60 s TTL */
+  contractWasm: msToSeconds(
+    process.env.CACHE_TTL_CONTRACT_WASM_MS,
+    60000
+  ),
 };
 
 module.exports = cacheTTL;

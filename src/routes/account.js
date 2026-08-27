@@ -1068,26 +1068,6 @@ router.get("/:id/payments", async (req, res, next) => {
       err.field = "startDate";
       err.receivedValue = req.query.startDate;
       err.expectedFormat = "ISO 8601 date earlier than endDate";
-      throw err;
-    }
-
-    // --- ?startDate / ?endDate validation ---
-    let startDate;
-    let endDate;
-    if (req.query.startDate !== undefined) {
-      startDate = validateISODate(req.query.startDate, "startDate");
-    }
-    if (req.query.endDate !== undefined) {
-      endDate = validateISODate(req.query.endDate, "endDate");
-    }
-    if (startDate && endDate && startDate >= endDate) {
-      const err = new Error(
-        "Query param 'startDate' must be before 'endDate'.",
-      );
-      err.isValidation = true;
-      err.field = "startDate";
-      err.receivedValue = req.query.startDate;
-      err.expectedFormat = "ISO 8601 date earlier than endDate";
       err.status = 400;
       throw err;
     }

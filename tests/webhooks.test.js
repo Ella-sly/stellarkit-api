@@ -58,6 +58,9 @@ jest.mock("../src/config/stellar", () => ({
   fetchAccountCreation: jest.fn(),
 }));
 
+// Bypass webhook signature auth so tests can call endpoints without a secret
+jest.mock("../src/middleware/webhookSignatureAuth", () => (req, res, next) => next());
+
 const app = require("../src/index");
 
 const VALID_URL    = "https://example.com/hooks";
@@ -253,6 +256,35 @@ describe("POST /webhooks", () => {
       .send({ url: VALID_URL, events: [123, null] });
     expect(res.statusCode).toBe(400);
     expect(res.body.error.type).toBe("ValidationError");
+  });
+});
+
+// ── GET /webhooks/:webhookId ─────────────────────────────────────────────────
+
+describe("GET /webhooks/:webhookId", () => {
+  it("returns 200 with full webhook configuration on success", async () => {
+    const postRes = await request(app)
+      .post("/webhooks")
+      .send({ url: VALID_URL, events: VALID_EVENTS });
+
+    const { webhookId } = postRes.body.data;
+    const res = await request(app).get(`/webhooks/${webhookId}`);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.webhookId).toBe(webhookId);
+    expect(res.body.data.url).toBe(VALID_URL);
+    expect(res.body.data.events).toEqual(VALID_EVENTS);
+    expect(res.body.data).toHaveProperty("accountId");
+    expect(res.body.data).toHaveProperty("createdAt");
+  });
+
+  it("returns 404 with type 'WebhookNotFound' when webhookId does not exist", async () => {
+    const res = await request(app).get("/webhooks/nonexistent-id");
+
+    expect(res.statusCode).toBe(404);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error.type).toBe("WebhookNotFound");
   });
 });
 

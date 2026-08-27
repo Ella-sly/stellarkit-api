@@ -41,11 +41,9 @@ const stellarTomlRouter = require("./routes/stellarToml");
 const claimableBalancesRouter = require("./routes/claimableBalances");
 const cacheStatsRouter = require("./routes/cacheStats");
 const metricsRouter = require("./routes/metrics");
-const webhooksRouter = require("./routes/webhooks");
 const sorobanRouter = require("./routes/soroban");
 const networkRouter = require("./routes/network");
 const assetsOverviewRouter = require("./routes/assetsOverview");
-const webhooksRouter = require("./routes/webhooks");
 
 const app = express();
 // Disable server identification header for security
@@ -176,7 +174,25 @@ async function warmStartupCaches({
 app.use(helmet());
 // Skip compression for responses smaller than 1 KB — gzip headers alone can exceed tiny payloads
 app.use(compression({ threshold: 1024 }));
-app.use(cors());
+// ── CORS ────────────────────────────────────────────────────────────────────
+// When ALLOWED_ORIGINS is set, only listed origins receive CORS headers.
+// Unlisted origins receive a 403. When unset, all origins are allowed (dev).
+const _allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+  : null;
+
+app.use(cors({
+  origin: _allowedOrigins
+    ? (origin, callback) => {
+        // Allow non-browser requests (no Origin header) and whitelisted origins
+        if (!origin || _allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          callback(Object.assign(new Error('CORS: origin not allowed'), { status: 403 }));
+        }
+      }
+    : true,
+}));
 app.use(requestIdMiddleware);
 app.use(requestLogger);
 app.use(contentTypeValidator);
@@ -222,9 +238,6 @@ app.get("/health", (req, res) => {
 app.use(apiKeyMiddleware);
 
 // ── API Routes ───────────────────────────────────────────────────────────────
-app.use("/network-status", networkStatusRouter);
-app.use("/network", networkStatusRouter);
-app.use("/fee-estimate", feeEstimateRouter);
 // Apply ETag middleware to cached endpoints
 app.use("/network-status", etagMiddleware, networkStatusRouter);
 app.use("/fee-estimate", etagMiddleware, feeEstimateRouter);
@@ -248,7 +261,6 @@ app.use("/soroban", sorobanRouter);
 app.use("/network", etagMiddleware, networkRouter);
 const transactionEffectsRouter = require("./routes/transaction.effects");
 app.use("/transaction", etagMiddleware, transactionEffectsRouter);
-app.use("/webhooks", webhooksRouter);
 
 // ── Root
 app.get("/", (req, res) => {

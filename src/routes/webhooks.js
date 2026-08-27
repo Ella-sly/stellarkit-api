@@ -95,6 +95,54 @@ router.get("/", webhookSignatureAuth, (req, res) => {
 });
 
 /**
+ * GET /webhooks/:webhookId
+ *
+ * Fetch a single webhook registration by ID.
+ *
+ * Response 200:
+ *   {
+ *     "success": true,
+ *     "data": {
+ *       "webhookId":    "wh_...",
+ *       "url":          "https://example.com/hooks",
+ *       "events":       ["payment"],
+ *       "accountId":    null,
+ *       "createdAt":    "2026-08-26T00:00:00.000Z"
+ *     }
+ *   }
+ *
+ * Response 404: { "success": false, "error": { "type": "WebhookNotFound", ... } }
+ */
+router.get("/:webhookId", webhookSignatureAuth, (req, res, next) => {
+  try {
+    const { webhookId } = req.params;
+    const entry = webhookStore.find(webhookId);
+
+    if (!entry) {
+      return next(
+        new StellarKitError(
+          `Webhook '${webhookId}' was not found.`,
+          404,
+          "WebhookNotFound",
+          null,
+          "Verify the webhookId is correct. Use GET /webhooks to list all registered webhooks.",
+        ),
+      );
+    }
+
+    return success(res, {
+      webhookId:  entry.webhookId,
+      url:        entry.url,
+      events:     entry.events,
+      accountId:  entry.accountId ?? null,
+      createdAt:  entry.registeredAt,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * DELETE /webhooks/:webhookId
  *
  * Unregister a webhook by its ID.  Verifies the webhook exists before removal.

@@ -101,6 +101,88 @@ router.get("/contract/:id", async (req, res, next) => {
 });
 
 /**
+ * GET /soroban/contract/:id/wasm
+ *
+ * Returns WASM bytecode metadata for a deployed Soroban contract.
+ * Fetches the contract instance entry and extracts the wasmHash, then
+ * retrieves the WASM entry to obtain size and ledger metadata.
+ *
+ * Response shape:
+ *   { success: true, data: { contractId, wasmHash, wasmSize, installedLedger, expiryLedger } }
+ *
+ * Errors:
+ *   400 — invalid contract ID
+ *   404 — contract not found
+ *   500 — Soroban RPC not configured
+ */
+router.get("/contract/:id/wasm", async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    validateContractId(id);
+
+    const cacheKey = `contract-wasm:${id}`;
+    const cached = cacheService.get(cacheKey);
+    if (cached) {
+      res.set("X-Cache", "HIT");
+      return success(res, cached);
+    }
+
+    const rpcServer = requireSorobanServer();
+
+    // Step 1: load the contract instance to get the wasmHash
+    const instanceEntry = await loadContractInstanceEntry(id);
+    const instance = instanceEntry.val.contractData().val().instance();
+    const executable = instance.executable();
+
+    if (executable.switch().name !== "contractExecutableWasm") {
+      throw new StellarKitError(
+        `Contract ${id} is a Stellar Asset Contract and does not have WASM bytecode.`,
+        404,
+        "ContractNotFound",
+        null,
+        "WASM metadata is only available for contracts deployed with custom WASM bytecode."
+      );
+    }
+
+    const wasmHash = executable.wasmHash();
+    const wasmHashHex = wasmHash.toString("hex");
+
+    // Step 2: load the WASM ledger entry to get size and ledger metadata
+    const { xdr } = require("@stellar/stellar-sdk");
+    const wasmKey = xdr.LedgerKey.contractCode(
+      new xdr.LedgerKeyContractCode({ hash: wasmHash })
+    );
+    const wasmResponse = await rpcServer.getLedgerEntries(wasmKey);
+
+    let wasmSize = null;
+    let installedLedger = null;
+    let expiryLedger = null;
+
+    if (wasmResponse.entries && wasmResponse.entries.length > 0) {
+      const wasmEntry = wasmResponse.entries[0];
+      const code = wasmEntry.val.contractCode();
+      wasmSize = code.code().length;
+      installedLedger = wasmEntry.lastModifiedLedgerSeq;
+      expiryLedger = wasmEntry.liveUntilLedgerSeq ?? null;
+    }
+
+    const data = {
+      contractId: id,
+      wasmHash: wasmHashHex,
+      wasmSize,
+      installedLedger,
+      expiryLedger,
+    };
+
+    cacheService.set(cacheKey, data, cacheTTL.contractWasm);
+    res.set("X-Cache", "MISS");
+    return success(res, data);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /soroban/contract/:id/storage
  *
  * Returns the contract's persistent instance-storage entries — the key/value

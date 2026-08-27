@@ -2,15 +2,42 @@
 // Optional mode: activated via REQUIRE_API_KEY=true env var
 // Clients send key via X-API-Key header
 // Keys configurable via API_KEYS env var (comma-separated)
+// Keys are hashed with SHA-256 on startup; plaintext is cleared from memory
 // Returns 401 for missing/invalid key when enabled
 // /health and / endpoints are always public
 
 const crypto = require('crypto');
 
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest();
+}
+
+// Hash all configured keys once at startup and clear the plaintext env var.
+let _hashedKeys = null;
+
+function getHashedKeys() {
+  if (_hashedKeys !== null) return _hashedKeys;
+
+  const raw = process.env.API_KEYS || '';
+  const keys = raw.split(',').map(k => k.trim()).filter(Boolean);
+  _hashedKeys = keys.map(sha256);
+
+  // Clear plaintext keys from the environment after hashing
+  if (process.env.API_KEYS !== undefined) {
+    process.env.API_KEYS = '';
+  }
+
+  return _hashedKeys;
+}
+
+// Expose for testing — allows resetting the cached hashes between test runs.
+function _resetHashedKeys() {
+  _hashedKeys = null;
+}
+
 const apiKeyMiddleware = (req, res, next) => {
   const requireApiKey = process.env.REQUIRE_API_KEY === 'true';
 
-  // If API key authentication is not required, proceed to next middleware
   if (!requireApiKey) {
     return next();
   }
@@ -20,11 +47,9 @@ const apiKeyMiddleware = (req, res, next) => {
     return next();
   }
 
-  // Get the API key from header and trim it
   const rawApiKey = req.headers["x-api-key"];
   const apiKey = rawApiKey ? rawApiKey.trim() : null;
 
-  // Check if API key is provided
   if (!apiKey) {
     return res.status(401).json({
       success: false,
@@ -35,13 +60,9 @@ const apiKeyMiddleware = (req, res, next) => {
     });
   }
 
-  // Get valid keys from environment variable (comma-separated)
-  const validKeys = process.env.API_KEYS
-    ? process.env.API_KEYS.split(',').map(key => key.trim())
-    : [];
+  const hashedKeys = getHashedKeys();
 
-  // If no valid keys are configured, treat as misconfiguration (but still deny)
-  if (validKeys.length === 0) {
+  if (hashedKeys.length === 0) {
     return res.status(401).json({
       success: false,
       error: {
@@ -51,25 +72,11 @@ const apiKeyMiddleware = (req, res, next) => {
     });
   }
 
-  // Validate the provided key using constant-time comparison to prevent timing attacks
-  let keyIsValid = false;
-  for (const validKey of validKeys) {
-    try {
-      if (
-        validKey.length === apiKey.length &&
-        crypto.timingSafeEqual(
-          Buffer.from(validKey),
-          Buffer.from(apiKey),
-        )
-      ) {
-        keyIsValid = true;
-        break;
-      }
-    } catch (err) {
-      // timingSafeEqual throws if buffers are different lengths
-      // Continue checking other keys
-    }
-  }
+  // Hash the incoming key and compare against stored hashes (constant-time)
+  const incomingHash = sha256(apiKey);
+  const keyIsValid = hashedKeys.some(storedHash =>
+    crypto.timingSafeEqual(storedHash, incomingHash)
+  );
 
   if (!keyIsValid) {
     return res.status(401).json({
@@ -81,8 +88,8 @@ const apiKeyMiddleware = (req, res, next) => {
     });
   }
 
-  // Key is valid, proceed to next middleware
   next();
 };
 
 module.exports = apiKeyMiddleware;
+module.exports._resetHashedKeys = _resetHashedKeys;
